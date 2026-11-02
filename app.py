@@ -1,0 +1,103 @@
+import streamlit as st
+from openpyxl import load_workbook
+import io
+import os
+import pandas as pd
+from utils.scanlist_maker import (
+    read_ws, 
+    MASTER_MAPPING, 
+    xlookup_accessories, 
+    xlookup_items
+)
+from utils.po_generator import(
+    MASTER_MAPPING_PO,
+    TEMPLATE_PATH,
+    collect_data, 
+    fill_template,
+    vendor_data
+)
+
+from utils.display import show_services
+
+# --- STREAMLIT WEB INTERFACE ---
+st.set_page_config(page_title='Supply Chain Automation Platform', page_icon='📝')
+st.title('📝 Supply Chain Automation Platform')
+#st.write('Automating scan list and PO creation.')
+st.write('Welcome!')
+
+
+# File Upload Box
+uploaded_file = st.file_uploader('Upload your Worksheet (.xlsx)', type=['xlsx'])
+
+# Initialize session state for showing the PO form
+if 'show_po_form' not in st.session_state:
+    st.session_state.show_po_form = False
+
+# Process Execution
+if uploaded_file is not None:
+    st.success('Worksheet loaded successfully!')
+    st.write('What would you like to do?')
+
+# Make Scan List     
+    if st.button('🚀 Make Scan list', use_container_width=True):
+        try:
+            # Run worksheet reading function
+            scan_list_df = read_ws(uploaded_file, MASTER_MAPPING)
+            scan_list = xlookup_accessories(scan_list_df)
+            final_scan_list, ref_num = xlookup_items(scan_list) 
+           
+            # Show a brief preview of what we captured on screen so you can verify it
+            st.info('Scan list has been generated successfully!')
+           
+            # Offer the file back to the browser for instant download
+            st.download_button(
+                label='📥 Download scan list',
+                # 1. Added sep=',' and prepend the UTF-8 BOM (\ufeff)
+                data=('\ufeff' + final_scan_list.to_csv(index=False, header=False, sep=';')).encode('utf-8'),
+                file_name=f'scan list {ref_num}.csv',
+                # 2. Fixed the MIME type specifically for CSV data
+                mime='text/csv',
+                use_container_width=True
+            )
+        
+        except Exception as e:
+            st.error(f'An unexpected error occurred: {e}')
+
+# Make Purchase Order        
+    if st.button('🚀 Make Purchase Order', use_container_width=True):
+        st.session_state.show_po_form = True
+
+    # Keep UI rendering alive across supplier changes or button downloads
+    if st.session_state.show_po_form:
+        supplier = st.selectbox(
+            'Select supplier', 
+            options=['Select supplier', 'VPM', 'Fast Center', 'NSLQ', 'Hill\'s NV']
+        )
+        
+        if supplier != 'Select supplier':
+            st.write(f'You selected: **{supplier}**')
+            #st.write('Generating Purchase Order...')
+
+            try:
+                ### Basic PO creation code here:
+                collected_data, accessories_dict, num_rows, vins_ors_dict = collect_data(uploaded_file, MASTER_MAPPING_PO)
+                ref_num = collected_data.get('cvn_num', 'UNKNOWN')
+                
+                new_po_stream = fill_template(TEMPLATE_PATH, supplier, collected_data, accessories_dict, vins_ors_dict)
+                #new_po_stream = fill_template(TEMPLATE_PATH, supplier, collected_data, accessories_dict, vins_ors_dict)
+
+                # Offer the file back to the browser for instant download
+                st.download_button(
+                label='📥 Download PO',
+                data=new_po_stream,
+                file_name=f'PO_{ref_num}.xlsx',
+                mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                use_container_width=True
+            )
+
+            except Exception as e:
+                st.error(f'An unexpected error occurred: {e}')
+                print(e)
+        
+                    
+
